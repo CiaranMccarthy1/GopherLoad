@@ -13,9 +13,18 @@ var (
 	ErrClusterNotFound = errors.New("cluster not found")
 )
 
-// Strategy selects a target cluster for each request.
+// Strategy is the canonical routing interface for GopherLoad.
+//
+// All routing algorithm implementations (e.g. in internal/strategy) satisfy
+// this interface implicitly via Go's structural typing. There must be exactly
+// one definition of this contract — here in the balancer package — to maintain
+// a single source of truth and avoid hidden coupling.
 type Strategy interface {
+	// Name returns a human-readable identifier for the strategy (e.g. "modulo").
 	Name() string
+	// Select chooses a target cluster from the provided list based on the
+	// request context. Implementations must handle an empty cluster slice
+	// by returning ErrNoClusters.
 	Select(ctx RequestContext, clusters []*Cluster) (*Cluster, error)
 }
 
