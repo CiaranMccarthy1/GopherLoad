@@ -20,9 +20,9 @@ import (
 	"github.com/ciara/gopherload/internal/scaler"
 	"github.com/ciara/gopherload/internal/strategy"
 
-	"google.golang.org/grpc"
 	pb "github.com/ciara/gopherload/api/proto"
 	"github.com/ciara/gopherload/internal/metrics"
+	"google.golang.org/grpc"
 )
 
 type stringList []string
@@ -43,6 +43,7 @@ func main() {
 		strategyName  = flag.String("strategy", "current_load", "Routing strategy: modulo|proximity|current_load")
 		kubeconfig    = flag.String("kubeconfig", "", "Path to kubeconfig (optional)")
 		namespace     = flag.String("namespace", "default", "Kubernetes namespace for scaling actions")
+		deployment    = flag.String("deployment", "gopherload", "Kubernetes deployment name to scale")
 		scaleUp       = flag.Int64("scale-up", 800, "Scale up when total reported load exceeds this value")
 		scaleDown     = flag.Int64("scale-down", 200, "Scale down when total reported load falls below this value")
 		scaleCooldown = flag.Duration("scale-cooldown", 2*time.Minute, "Minimum time between scaling actions")
@@ -77,7 +78,7 @@ func main() {
 	}
 
 	// 3. Initialize Scaler
-	sc, err := scaler.NewController(*kubeconfig, *namespace, *scaleUp, *scaleDown, *scaleCooldown)
+	sc, err := scaler.NewController(*kubeconfig, *namespace, *deployment, *scaleUp, *scaleDown, *scaleCooldown)
 	if err != nil {
 		log.Printf("scaler disabled: %v", err)
 		sc = nil
@@ -85,7 +86,7 @@ func main() {
 
 	// 4. Setup gRPC
 	grpcServer := grpc.NewServer()
-	pb.RegisterClusterStatusServer(grpcServer, rpc.NewClusterStatusService(lb, sc))
+	pb.RegisterClusterStatusServer(grpcServer, rpc.NewClusterStatusService(lb))
 
 	grpcListener, err := net.Listen("tcp", *grpcAddr)
 	if err != nil {
@@ -102,24 +103,52 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	errChan := make(chan error, 2)
+
 	go func() {
 		log.Printf("gRPC server listening on %s (Protobuf codec)", *grpcAddr)
 		if err := grpcServer.Serve(grpcListener); err != nil {
-			log.Fatalf("gRPC server failed: %v", err)
+			errChan <- fmt.Errorf("gRPC server failed: %w", err)
 		}
 	}()
 
 	go func() {
 		log.Printf("HTTP proxy listening on %s", *httpAddr)
 		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("HTTP server failed: %v", err)
+			errChan <- fmt.Errorf("HTTP server failed: %w", err)
 		}
 	}()
 
-	<-ctx.Done()
-	log.Printf("shutting down")
+	// 7. Background Scaling Loop
+	if sc != nil {
+		go func() {
+			ticker := time.NewTicker(15 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					total := lb.TotalReportedLoad()
+					if err := sc.EvaluateAndScale(ctx, total); err != nil {
+						log.Printf("scaling error: %v", err)
+					}
+				}
+			}
+		}()
+	}
+
+	select {
+	case <-ctx.Done():
+		log.Printf("shutting down gracefully (signal received)")
+	case err := <-errChan:
+		log.Printf("shutting down due to error: %v", err)
+		stop() // Cancel context to stop other goroutines
+	}
+
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	
 	grpcServer.GracefulStop()
 	_ = httpServer.Shutdown(shutdownCtx)
 }

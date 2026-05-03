@@ -4,15 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
+	"log"
 	"sync/atomic"
 	"time"
 
 	"github.com/ciara/gopherload/internal/metrics"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/retry"
 )
 
 var ErrNotConfigured = errors.New("kubernetes client not configured")
@@ -21,15 +23,15 @@ var ErrNotConfigured = errors.New("kubernetes client not configured")
 type Controller struct {
 	clientset          *kubernetes.Clientset
 	namespace          string
+	deploymentName     string
 	scaleUpThreshold   int64
 	scaleDownThreshold int64
 	cooldown           time.Duration
 	lastActionUnix     int64
-	mu                 sync.Mutex
 }
 
 // NewController creates a Kubernetes client and configures thresholds.
-func NewController(kubeconfigPath, namespace string, scaleUp, scaleDown int64, cooldown time.Duration) (*Controller, error) {
+func NewController(kubeconfigPath, namespace, deploymentName string, scaleUp, scaleDown int64, cooldown time.Duration) (*Controller, error) {
 	config, err := buildKubeConfig(kubeconfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("build kubeconfig: %w", err)
@@ -41,6 +43,9 @@ func NewController(kubeconfigPath, namespace string, scaleUp, scaleDown int64, c
 	if namespace == "" {
 		namespace = "default"
 	}
+	if deploymentName == "" {
+		deploymentName = "gopherload"
+	}
 	if cooldown <= 0 {
 		cooldown = 2 * time.Minute
 	}
@@ -48,6 +53,7 @@ func NewController(kubeconfigPath, namespace string, scaleUp, scaleDown int64, c
 	return &Controller{
 		clientset:          clientset,
 		namespace:          namespace,
+		deploymentName:     deploymentName,
 		scaleUpThreshold:   scaleUp,
 		scaleDownThreshold: scaleDown,
 		cooldown:           cooldown,
@@ -66,9 +72,6 @@ func (s *Controller) EvaluateAndScale(ctx context.Context, totalLoad int64) erro
 	if s == nil || s.clientset == nil {
 		return ErrNotConfigured
 	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	if !s.readyForAction() {
 		return nil
@@ -108,16 +111,36 @@ func (s *Controller) markAction() {
 	atomic.StoreInt64(&s.lastActionUnix, time.Now().UnixNano())
 }
 
-// CreateCluster is a stub for provisioning a new cluster or node pool.
+// CreateCluster scales up the target Kubernetes Deployment by incrementing
+// its replica count by 1.
 func (s *Controller) CreateCluster(ctx context.Context) error {
 	if s.clientset == nil {
 		return ErrNotConfigured
 	}
 
-	// TODO: Replace with actual infrastructure provisioning logic.
-	_, err := s.clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{Limit: 1})
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		scale, err := s.clientset.AppsV1().Deployments(s.namespace).GetScale(ctx, s.deploymentName, metav1.GetOptions{})
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return fmt.Errorf("deployment %q not found in namespace %q", s.deploymentName, s.namespace)
+			}
+			return fmt.Errorf("failed to get deployment scale: %w", err)
+		}
+
+		oldReplicas := scale.Spec.Replicas
+		scale.Spec.Replicas++
+
+		updated, err := s.clientset.AppsV1().Deployments(s.namespace).UpdateScale(ctx, s.deploymentName, scale, metav1.UpdateOptions{})
+		if err != nil {
+			return err
+		}
+
+		log.Printf("Scaled up deployment %s/%s from %d to %d replicas", s.namespace, s.deploymentName, oldReplicas, updated.Spec.Replicas)
+		return nil
+	})
+
 	if err != nil {
-		return fmt.Errorf("kubernetes api check failed: %w", err)
+		return fmt.Errorf("failed to scale up: %w", err)
 	}
 
 	if metrics.ScaleEventsTotal != nil {
@@ -127,16 +150,41 @@ func (s *Controller) CreateCluster(ctx context.Context) error {
 	return nil
 }
 
-// DeleteCluster is a stub for decommissioning a cluster or node pool.
+// DeleteCluster scales down the target Kubernetes Deployment by decrementing
+// its replica count by 1, with a minimum bound of 1 replica.
 func (s *Controller) DeleteCluster(ctx context.Context) error {
 	if s.clientset == nil {
 		return ErrNotConfigured
 	}
 
-	// TODO: Replace with actual infrastructure deprovisioning logic.
-	_, err := s.clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{Limit: 1})
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		scale, err := s.clientset.AppsV1().Deployments(s.namespace).GetScale(ctx, s.deploymentName, metav1.GetOptions{})
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return fmt.Errorf("deployment %q not found in namespace %q", s.deploymentName, s.namespace)
+			}
+			return fmt.Errorf("failed to get deployment scale: %w", err)
+		}
+
+		oldReplicas := scale.Spec.Replicas
+		if scale.Spec.Replicas > 1 {
+			scale.Spec.Replicas--
+		} else {
+			log.Printf("Deployment %s/%s is already at minimum replicas (1), not scaling down", s.namespace, s.deploymentName)
+			return nil
+		}
+
+		updated, err := s.clientset.AppsV1().Deployments(s.namespace).UpdateScale(ctx, s.deploymentName, scale, metav1.UpdateOptions{})
+		if err != nil {
+			return err
+		}
+
+		log.Printf("Scaled down deployment %s/%s from %d to %d replicas", s.namespace, s.deploymentName, oldReplicas, updated.Spec.Replicas)
+		return nil
+	})
+
 	if err != nil {
-		return fmt.Errorf("kubernetes api check failed: %w", err)
+		return fmt.Errorf("failed to scale down: %w", err)
 	}
 
 	if metrics.ScaleEventsTotal != nil {

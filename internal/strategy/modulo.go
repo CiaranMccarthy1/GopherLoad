@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"hash/fnv"
+	"io"
 
 	"github.com/ciara/gopherload/internal/balancer"
 )
@@ -28,7 +29,7 @@ func (ModuloStrategy) Select(ctx balancer.RequestContext, clusters []*balancer.C
 		key = clusters[0].ID
 	}
 	hasher := fnv.New32a()
-	_, _ = hasher.Write([]byte(key))
+	_, _ = io.WriteString(hasher, key)
 	idx := int(hasher.Sum32() % uint32(len(clusters)))
 	return clusters[idx], nil
 }

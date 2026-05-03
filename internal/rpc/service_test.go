@@ -89,7 +89,7 @@ func TestReportLoad(t *testing.T) {
 				lb = tt.lb
 			}
 
-			svc := NewClusterStatusService(lb, nil)
+			svc := NewClusterStatusService(lb)
 			ack, err := svc.ReportLoad(context.Background(), tt.req)
 			if err != nil {
 				t.Fatalf("ReportLoad() unexpected error: %v", err)
@@ -106,7 +106,7 @@ func TestReportLoad(t *testing.T) {
 
 func TestReportLoad_updates_total_load(t *testing.T) {
 	lb := setupLB(t)
-	svc := NewClusterStatusService(lb, nil)
+	svc := NewClusterStatusService(lb)
 
 	_, _ = svc.ReportLoad(context.Background(), &pb.LoadReport{ClusterId: "c-1", ActiveConnections: 100})
 	_, _ = svc.ReportLoad(context.Background(), &pb.LoadReport{ClusterId: "c-2", ActiveConnections: 200})
@@ -124,7 +124,7 @@ func TestReportLoad_updates_total_load(t *testing.T) {
 func TestReportLoad_scaler_nil_no_panic(t *testing.T) {
 	lb := setupLB(t)
 	// Passing nil scaler — must not panic.
-	svc := NewClusterStatusService(lb, nil)
+	svc := NewClusterStatusService(lb)
 
 	ack, err := svc.ReportLoad(context.Background(), &pb.LoadReport{ClusterId: "c-1", ActiveConnections: 50})
 	if err != nil {

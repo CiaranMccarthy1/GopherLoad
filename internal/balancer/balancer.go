@@ -3,7 +3,6 @@ package balancer
 import (
 	"errors"
 	"net/http"
-	"net/http/httputil"
 	"sort"
 	"strconv"
 	"sync"
@@ -37,6 +36,7 @@ type Strategy interface {
 type LoadBalancer struct {
 	mu       sync.RWMutex
 	clusters map[string]*Cluster
+	sorted   []*Cluster // Cached sorted list for O(1) read
 	strategy Strategy
 }
 
@@ -46,6 +46,18 @@ func NewLoadBalancer(strategy Strategy) *LoadBalancer {
 		clusters: make(map[string]*Cluster),
 		strategy: strategy,
 	}
+}
+
+// updateSorted regenerates the cached sorted slice. Caller must hold lb.mu for writing.
+func (lb *LoadBalancer) updateSorted() {
+	list := make([]*Cluster, 0, len(lb.clusters))
+	for _, cluster := range lb.clusters {
+		list = append(list, cluster)
+	}
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].ID < list[j].ID
+	})
+	lb.sorted = list
 }
 
 // AddCluster registers a new backend target.
@@ -63,6 +75,7 @@ func (lb *LoadBalancer) AddCluster(cluster *Cluster) error {
 		return errors.New("cluster already exists")
 	}
 	lb.clusters[cluster.ID] = cluster
+	lb.updateSorted()
 	return nil
 }
 
@@ -74,6 +87,7 @@ func (lb *LoadBalancer) RemoveCluster(id string) bool {
 		return false
 	}
 	delete(lb.clusters, id)
+	lb.updateSorted()
 	return true
 }
 
@@ -89,14 +103,7 @@ func (lb *LoadBalancer) GetCluster(id string) (*Cluster, bool) {
 func (lb *LoadBalancer) ListClusters() []*Cluster {
 	lb.mu.RLock()
 	defer lb.mu.RUnlock()
-	list := make([]*Cluster, 0, len(lb.clusters))
-	for _, cluster := range lb.clusters {
-		list = append(list, cluster)
-	}
-	sort.Slice(list, func(i, j int) bool {
-		return list[i].ID < list[j].ID
-	})
-	return list
+	return lb.sorted
 }
 
 // SetStrategy updates the routing strategy.
@@ -192,15 +199,10 @@ func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 
-	proxy := httputil.NewSingleHostReverseProxy(cluster.URL)
-	proxy.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, proxyErr error) {
-		http.Error(rw, "upstream error", http.StatusBadGateway)
-	}
-
 	r.Header.Set("X-GopherLoad-Cluster", cluster.ID)
 
 	rc := &responseCapture{ResponseWriter: w, statusCode: http.StatusOK}
-	proxy.ServeHTTP(rc, r)
+	cluster.Proxy.ServeHTTP(rc, r)
 
 	elapsed := time.Since(start).Seconds()
 

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"strings"
 	"sync/atomic"
@@ -16,6 +17,7 @@ type Cluster struct {
 	URL            *url.URL
 	Region         string
 	MaxConnections int64
+	Proxy          *httputil.ReverseProxy
 
 	activeConnections int64
 	reportedLoad      int64
@@ -37,11 +39,18 @@ func NewCluster(id, rawURL, region string, maxConnections int64) (*Cluster, erro
 	if maxConnections <= 0 {
 		maxConnections = 1000
 	}
+
+	proxy := httputil.NewSingleHostReverseProxy(parsed)
+	proxy.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, proxyErr error) {
+		http.Error(rw, "upstream error", http.StatusBadGateway)
+	}
+
 	return &Cluster{
 		ID:             id,
 		URL:            parsed,
 		Region:         region,
 		MaxConnections: maxConnections,
+		Proxy:          proxy,
 	}, nil
 }
 

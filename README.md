@@ -1,67 +1,102 @@
 # GopherLoad
 
-GopherLoad is a high-performance, professional L7 Load Balancer and Reverse Proxy written in Go. It features dynamic routing strategies, gRPC-based real-time load reporting, and automated Kubernetes scaling integration.
+GopherLoad is an L7 HTTP reverse proxy and load balancer written in Go (1.22+) that features dynamic routing strategies and Kubernetes integration. It ingests real-time backend metrics via a gRPC Protobuf interface and automatically scales a target Kubernetes Deployment based on aggregated connection loads.
 
-## Features
+## Architecture
 
-- **L7 Reverse Proxy**: Efficiently routes HTTP traffic to backend clusters.
-- **Pluggable Routing Strategies**:
-  - `current_load`: Routes to the least busy cluster (least connections).
-  - `proximity`: Region-aware routing favoring the lowest latency.
-  - `modulo`: Hash-based sticky routing for client consistency.
-- **gRPC Load Reporting**: Real-time metric ingestion from backend clusters via gRPC with Protobuf serialization.
-- **Auto-Scaling**: Built-in Kubernetes `ScaleController` that manages infrastructure based on total system load.
-- **Graceful Shutdown**: Orchestrated shutdown of HTTP and gRPC servers.
+```text
+       HTTP (:8080)                                         gRPC (:9090)
+[Client] ───> [GopherLoad HTTP Proxy]                         [GopherLoad gRPC Server]
+                    │                                                  ▲
+                    ├──> [Cluster A] ─────────(LoadReport)─────────────┤
+                    ├──> [Cluster B] ─────────(LoadReport)─────────────┤
+                    └──> [Cluster C] ─────────(LoadReport)─────────────┘
+                                                                       │
+                                                                       ▼
+                                                                [K8s Scaler]
+                                                                       │ (client-go)
+                                                                       ▼
+                                                          [Kubernetes Deployment]
+```
 
-## Project Structure
+*Note: GopherLoad supports Graceful Shutdown handling `os.Interrupt` and `syscall.SIGTERM` using `signal.NotifyContext`, safely draining the HTTP reverse proxy (`httpServer.Shutdown`) and gRPC interface (`grpcServer.GracefulStop`). Diagnostic endpoints include Prometheus metrics at `/metrics` and a readiness check at `/__health`.*
 
-GopherLoad follows the [Standard Go Project Layout](https://github.com/golang-standards/project-layout):
+## Routing Strategies
 
-- `cmd/gopherload`: The main application entry point.
-- `internal/balancer`: Core load balancing and proxying logic.
-- `internal/strategy`: Implementations of different routing algorithms.
-- `internal/scaler`: Kubernetes integration for auto-scaling.
-- `internal/rpc`: gRPC service for cluster load reporting.
-- `api/proto`: API definitions and protobuf contracts.
+The balancer uses structural typing to enforce a single canonical `Strategy` interface. Backends are selected based on the configured algorithm.
 
-## Installation & Usage
+| Strategy | Algorithm | Best For | Tie-break |
+| :--- | :--- | :--- | :--- |
+| `current_load` | Least active connections | Workloads with variable request durations | Lowest Cluster ID (lexicographical) |
+| `proximity` | Region-latency aware | Multi-region topologies | Lowest load, then lowest ID |
+| `modulo` | FNV-32a hash of Client ID | Sticky sessions and cache coherency | Hash remainder |
 
-### Prerequisites
-- Go 1.22+
-- Access to a Kubernetes cluster (optional, for scaling features)
+## Configuration Flags
+
+| Flag | Default | Description |
+| :--- | :--- | :--- |
+| `--http-addr` | `:8080` | HTTP reverse proxy and diagnostics listen address |
+| `--grpc-addr` | `:9090` | gRPC load reporting listen address |
+| `--strategy` | `current_load` | Routing strategy (`modulo`, `proximity`, `current_load`) |
+| `--kubeconfig` | `""` | Path to kubeconfig (falls back to InClusterConfig if empty) |
+| `--namespace` | `default` | Kubernetes namespace for the target deployment |
+| `--deployment` | `gopherload` | Kubernetes deployment name to scale |
+| `--scale-up` | `800` | Aggregate reported load threshold to increment replicas |
+| `--scale-down` | `200` | Aggregate reported load threshold to decrement replicas |
+| `--scale-cooldown` | `2m0s` | Minimum duration between scaling operations |
+| `--backend` | (3 mock clusters) | Cluster spec format: `id=<id>,url=<url>,region=<region>,max=<max>` |
+
+## gRPC API
+
+Backend clusters actively push connection metrics to GopherLoad using the `ClusterStatus.ReportLoad` RPC. The `active_connections` field updates the internal gauge used by the `current_load` routing strategy, while the accumulated `total_load` across all clusters evaluates scaling thresholds in the Kubernetes `Controller`.
+
+```protobuf
+syntax = "proto3";
+
+package gopherload.v1;
+
+option go_package = "github.com/ciara/gopherload/api/proto;gopherloadv1";
+
+// ClusterStatus reports load metrics from clusters to the balancer.
+service ClusterStatus {
+  rpc ReportLoad(LoadReport) returns (LoadAck);
+}
+
+message LoadReport {
+  string cluster_id = 1;
+  int64 active_connections = 2;
+  string region = 3;
+  int64 max_connections = 4;
+  int64 observed_at_unix = 5;
+}
+
+message LoadAck {
+  bool accepted = 1;
+  string message = 2;
+  int64 total_load = 3;
+}
+```
+
+## Development
+
+The project requires Go 1.22 or higher and uses `client-go` and `google.golang.org/grpc`.
+
+### Run Tests
+```bash
+go test ./... -v -count=1
+```
 
 ### Build
 ```bash
 go build -o gopherload ./cmd/gopherload
 ```
 
-### Run
-Start the load balancer with default settings:
+### Run Locally
 ```bash
-./gopherload
+./gopherload \
+  --strategy=modulo \
+  --http-addr=:8080 \
+  --grpc-addr=:9090 \
+  --backend="id=us-east-1,url=http://10.0.1.10:80,region=us-east,max=500" \
+  --backend="id=eu-west-1,url=http://10.0.2.10:80,region=eu-west,max=500"
 ```
-
-### Configuration
-GopherLoad can be configured via command-line flags:
-
-| Flag | Description | Default |
-|------|-------------|---------|
-| `--http-addr` | HTTP proxy listen address | `:8080` |
-| `--grpc-addr` | gRPC listen address | `:9090` |
-| `--strategy` | Routing strategy (modulo/proximity/current_load) | `current_load` |
-| `--scale-up` | Load threshold to trigger scale-up | `800` |
-| `--scale-down`| Load threshold to trigger scale-down | `200` |
-| `--backend`   | Backend cluster spec (multiple allowed) | `cluster-a,b,c` |
-
-**Example Backend Spec:**
-```bash
-./gopherload --backend "id=prod-1,url=http://10.0.0.1,region=us-east,max=1000"
-```
-
-## API
-
-Backends report their load via the `ClusterStatus` gRPC service. The API definition is located in `api/proto/cluster_status.proto`.
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

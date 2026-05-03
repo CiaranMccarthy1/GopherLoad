@@ -2,26 +2,22 @@ package rpc
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	pb "github.com/ciara/gopherload/api/proto"
 	"github.com/ciara/gopherload/internal/balancer"
 	"github.com/ciara/gopherload/internal/metrics"
-	"github.com/ciara/gopherload/internal/scaler"
 )
 
 // ClusterStatusService handles gRPC load reports from clusters.
 type ClusterStatusService struct {
 	pb.UnimplementedClusterStatusServer
-	lb     *balancer.LoadBalancer
-	scaler *scaler.Controller
+	lb *balancer.LoadBalancer
 }
 
-func NewClusterStatusService(lb *balancer.LoadBalancer, sc *scaler.Controller) *ClusterStatusService {
+func NewClusterStatusService(lb *balancer.LoadBalancer) *ClusterStatusService {
 	return &ClusterStatusService{
-		lb:     lb,
-		scaler: sc,
+		lb: lb,
 	}
 }
 
@@ -42,11 +38,6 @@ func (s *ClusterStatusService) ReportLoad(ctx context.Context, req *pb.LoadRepor
 	}
 
 	total := s.lb.TotalReportedLoad()
-	if s.scaler != nil {
-		if err := s.scaler.EvaluateAndScale(ctx, total); err != nil {
-			return &pb.LoadAck{Accepted: true, Message: fmt.Sprintf("scaler error: %v", err), TotalLoad: total}, nil
-		}
-	}
 
 	return &pb.LoadAck{Accepted: true, Message: "load updated", TotalLoad: total}, nil
 }
