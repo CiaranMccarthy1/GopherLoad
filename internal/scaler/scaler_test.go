@@ -70,13 +70,12 @@ func TestController_ScaleDown(t *testing.T) {
 		t.Fatalf("ScaleDown failed: %v", err)
 	}
 
-	scale, err := clientset.AppsV1().Deployments("default").GetScale(context.Background(), "gopherload", metav1.GetOptions{})
+	deployment, err := clientset.AppsV1().Deployments("default").Get(context.Background(), "gopherload", metav1.GetOptions{})
 	if err != nil {
-		t.Fatalf("Failed to get scale: %v", err)
+		t.Fatalf("Failed to get deployment: %v", err)
 	}
-
-	if scale.Spec.Replicas != 1 {
-		t.Errorf("Expected 1 replica, got %d", scale.Spec.Replicas)
+	if *deployment.Spec.Replicas != 1 {
+		t.Errorf("Expected 1 replica, got %d", *deployment.Spec.Replicas)
 	}
 }
 
@@ -105,13 +104,12 @@ func TestController_ScaleDown_MinimumBound(t *testing.T) {
 		t.Fatalf("ScaleDown failed: %v", err)
 	}
 
-	scale, err := clientset.AppsV1().Deployments("default").GetScale(context.Background(), "gopherload", metav1.GetOptions{})
+	deployment, err := clientset.AppsV1().Deployments("default").Get(context.Background(), "gopherload", metav1.GetOptions{})
 	if err != nil {
-		t.Fatalf("Failed to get scale: %v", err)
+		t.Fatalf("Failed to get deployment: %v", err)
 	}
-
-	if scale.Spec.Replicas != 1 {
-		t.Errorf("Expected 1 replica, got %d", scale.Spec.Replicas)
+	if *deployment.Spec.Replicas != 1 {
+		t.Errorf("Expected 1 replica, got %d", *deployment.Spec.Replicas)
 	}
 }
 
