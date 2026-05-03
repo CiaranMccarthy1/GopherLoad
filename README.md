@@ -9,7 +9,7 @@ GopherLoad is a high-performance, professional L7 Load Balancer and Reverse Prox
   - `current_load`: Routes to the least busy cluster (least connections).
   - `proximity`: Region-aware routing favoring the lowest latency.
   - `modulo`: Hash-based sticky routing for client consistency.
-- **gRPC Load Reporting**: Real-time metric ingestion from backend clusters via gRPC (using a lightweight JSON codec).
+- **gRPC Load Reporting**: Real-time metric ingestion from backend clusters via gRPC with Protobuf serialization.
 - **Auto-Scaling**: Built-in Kubernetes `ScaleController` that manages infrastructure based on total system load.
 - **Graceful Shutdown**: Orchestrated shutdown of HTTP and gRPC servers.
 

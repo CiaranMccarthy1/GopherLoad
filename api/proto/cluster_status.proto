@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package gopherload.v1;
 
-option go_package = "github.com/ciara/gopherload/proto;gopherloadv1";
+option go_package = "github.com/ciara/gopherload/api/proto;gopherloadv1";
 
 // ClusterStatus reports load metrics from clusters to the balancer.
 service ClusterStatus {

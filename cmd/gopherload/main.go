@@ -21,7 +21,7 @@ import (
 	"github.com/ciara/gopherload/internal/strategy"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/encoding"
+	pb "github.com/ciara/gopherload/api/proto"
 )
 
 type stringList []string
@@ -81,9 +81,8 @@ func main() {
 	}
 
 	// 4. Setup gRPC
-	encoding.RegisterCodec(rpc.JSONCodec{})
-	grpcServer := grpc.NewServer(grpc.ForceServerCodec(rpc.JSONCodec{}))
-	rpc.RegisterClusterStatusServer(grpcServer, rpc.NewClusterStatusService(lb, sc))
+	grpcServer := grpc.NewServer()
+	pb.RegisterClusterStatusServer(grpcServer, rpc.NewClusterStatusService(lb, sc))
 
 	grpcListener, err := net.Listen("tcp", *grpcAddr)
 	if err != nil {
@@ -101,7 +100,7 @@ func main() {
 	defer stop()
 
 	go func() {
-		log.Printf("gRPC server listening on %s (JSON codec for POC)", *grpcAddr)
+		log.Printf("gRPC server listening on %s (Protobuf codec)", *grpcAddr)
 		if err := grpcServer.Serve(grpcListener); err != nil {
 			log.Fatalf("gRPC server failed: %v", err)
 		}
