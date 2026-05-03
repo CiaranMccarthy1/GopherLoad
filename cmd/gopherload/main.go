@@ -22,6 +22,7 @@ import (
 
 	"google.golang.org/grpc"
 	pb "github.com/ciara/gopherload/api/proto"
+	"github.com/ciara/gopherload/internal/metrics"
 )
 
 type stringList []string
@@ -49,6 +50,8 @@ func main() {
 	)
 	flag.Var(&backends, "backend", "Backend cluster spec: id=<id>,url=<url>,region=<region>,max=<max>")
 	flag.Parse()
+
+	metrics.Register()
 
 	// 1. Build Strategy
 	strategyImpl, err := buildStrategy(*strategyName)

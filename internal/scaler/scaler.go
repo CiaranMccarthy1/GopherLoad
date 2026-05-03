@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ciara/gopherload/internal/metrics"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -119,6 +120,10 @@ func (s *Controller) CreateCluster(ctx context.Context) error {
 		return fmt.Errorf("kubernetes api check failed: %w", err)
 	}
 
+	if metrics.ScaleEventsTotal != nil {
+		metrics.ScaleEventsTotal.WithLabelValues("up").Inc()
+	}
+
 	return nil
 }
 
@@ -132,6 +137,10 @@ func (s *Controller) DeleteCluster(ctx context.Context) error {
 	_, err := s.clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{Limit: 1})
 	if err != nil {
 		return fmt.Errorf("kubernetes api check failed: %w", err)
+	}
+
+	if metrics.ScaleEventsTotal != nil {
+		metrics.ScaleEventsTotal.WithLabelValues("down").Inc()
 	}
 
 	return nil

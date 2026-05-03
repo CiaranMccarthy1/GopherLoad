@@ -7,6 +7,7 @@ import (
 
 	pb "github.com/ciara/gopherload/api/proto"
 	"github.com/ciara/gopherload/internal/balancer"
+	"github.com/ciara/gopherload/internal/metrics"
 	"github.com/ciara/gopherload/internal/scaler"
 )
 
@@ -34,6 +35,10 @@ func (s *ClusterStatusService) ReportLoad(ctx context.Context, req *pb.LoadRepor
 
 	if err := s.lb.UpdateReportedLoad(req.ClusterId, req.ActiveConnections); err != nil {
 		return &pb.LoadAck{Accepted: false, Message: err.Error()}, nil
+	}
+
+	if metrics.ReportedLoad != nil {
+		metrics.ReportedLoad.WithLabelValues(req.ClusterId).Set(float64(req.ActiveConnections))
 	}
 
 	total := s.lb.TotalReportedLoad()

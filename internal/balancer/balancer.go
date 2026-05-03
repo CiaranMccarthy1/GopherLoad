@@ -5,7 +5,12 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"sort"
+	"strconv"
 	"sync"
+	"time"
+
+	"github.com/ciara/gopherload/internal/metrics"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var (
@@ -148,11 +153,28 @@ func (lb *LoadBalancer) TotalActiveConnections() int64 {
 	return total
 }
 
+// responseCapture wraps http.ResponseWriter to capture the status code.
+type responseCapture struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (rc *responseCapture) WriteHeader(code int) {
+	rc.statusCode = code
+	rc.ResponseWriter.WriteHeader(code)
+}
+
 // ServeHTTP handles incoming L7 requests and proxies them to a cluster.
+// It also serves the /__health and /metrics diagnostic endpoints.
 func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/__health" {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
+		return
+	}
+
+	if r.URL.Path == "/metrics" {
+		promhttp.Handler().ServeHTTP(w, r)
 		return
 	}
 
@@ -164,7 +186,11 @@ func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cluster.IncActive()
-	defer cluster.DecActive()
+	if metrics.ActiveConnections != nil {
+		metrics.ActiveConnections.WithLabelValues(cluster.ID).Inc()
+	}
+
+	start := time.Now()
 
 	proxy := httputil.NewSingleHostReverseProxy(cluster.URL)
 	proxy.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, proxyErr error) {
@@ -172,5 +198,20 @@ func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	r.Header.Set("X-GopherLoad-Cluster", cluster.ID)
-	proxy.ServeHTTP(w, r)
+
+	rc := &responseCapture{ResponseWriter: w, statusCode: http.StatusOK}
+	proxy.ServeHTTP(rc, r)
+
+	elapsed := time.Since(start).Seconds()
+
+	cluster.DecActive()
+	if metrics.ActiveConnections != nil {
+		metrics.ActiveConnections.WithLabelValues(cluster.ID).Dec()
+	}
+	if metrics.RequestsTotal != nil {
+		metrics.RequestsTotal.WithLabelValues(cluster.ID, strconv.Itoa(rc.statusCode)).Inc()
+	}
+	if metrics.RequestDuration != nil {
+		metrics.RequestDuration.WithLabelValues(cluster.ID).Observe(elapsed)
+	}
 }
