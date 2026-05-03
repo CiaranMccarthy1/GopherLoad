@@ -101,11 +101,17 @@ func (lb *LoadBalancer) GetCluster(id string) (*Cluster, bool) {
 	return cluster, ok
 }
 
-// ListClusters returns a deterministic snapshot of backends.
+// ListClusters returns a deterministic snapshot of healthy backends.
 func (lb *LoadBalancer) ListClusters() []*Cluster {
 	lb.mu.RLock()
 	defer lb.mu.RUnlock()
-	return lb.sorted
+	res := make([]*Cluster, 0, len(lb.sorted))
+	for _, c := range lb.sorted {
+		if c.IsHealthy() {
+			res = append(res, c)
+		}
+	}
+	return res
 }
 
 // SetStrategy updates the routing strategy.
@@ -195,9 +201,7 @@ func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cluster.IncActive()
-	if metrics.ActiveConnections != nil {
-		metrics.ActiveConnections.WithLabelValues(cluster.ID).Inc()
-	}
+	metrics.IncActiveConnections(cluster.ID)
 
 	start := time.Now()
 
@@ -206,16 +210,16 @@ func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rc := &responseCapture{ResponseWriter: w, statusCode: http.StatusOK}
 	cluster.Proxy.ServeHTTP(rc, r)
 
+	if rc.statusCode >= 500 {
+		cluster.RecordError()
+	} else {
+		cluster.RecordSuccess()
+	}
+
 	elapsed := time.Since(start).Seconds()
 
 	cluster.DecActive()
-	if metrics.ActiveConnections != nil {
-		metrics.ActiveConnections.WithLabelValues(cluster.ID).Dec()
-	}
-	if metrics.RequestsTotal != nil {
-		metrics.RequestsTotal.WithLabelValues(cluster.ID, strconv.Itoa(rc.statusCode)).Inc()
-	}
-	if metrics.RequestDuration != nil {
-		metrics.RequestDuration.WithLabelValues(cluster.ID).Observe(elapsed)
-	}
+	metrics.DecActiveConnections(cluster.ID)
+	metrics.IncRequestsTotal(cluster.ID, strconv.Itoa(rc.statusCode))
+	metrics.ObserveRequestDuration(cluster.ID, elapsed)
 }

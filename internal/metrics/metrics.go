@@ -88,3 +88,45 @@ func Register() {
 		)
 	})
 }
+
+// IncActiveConnections increments the active connections gauge for a cluster.
+func IncActiveConnections(clusterID string) {
+	if ActiveConnections != nil {
+		ActiveConnections.WithLabelValues(clusterID).Inc()
+	}
+}
+
+// DecActiveConnections decrements the active connections gauge for a cluster.
+func DecActiveConnections(clusterID string) {
+	if ActiveConnections != nil {
+		ActiveConnections.WithLabelValues(clusterID).Dec()
+	}
+}
+
+// ObserveRequestDuration records the duration of a request for a cluster.
+func ObserveRequestDuration(clusterID string, duration float64) {
+	if RequestDuration != nil {
+		RequestDuration.WithLabelValues(clusterID).Observe(duration)
+	}
+}
+
+// IncRequestsTotal increments the requests counter for a cluster and status code.
+func IncRequestsTotal(clusterID string, statusCode string) {
+	if RequestsTotal != nil {
+		RequestsTotal.WithLabelValues(clusterID, statusCode).Inc()
+	}
+}
+
+// SetReportedLoad sets the reported load gauge for a cluster.
+func SetReportedLoad(clusterID string, load float64) {
+	if ReportedLoad != nil {
+		ReportedLoad.WithLabelValues(clusterID).Set(load)
+	}
+}
+
+// IncScaleEventsTotal increments the scale events counter for a direction.
+func IncScaleEventsTotal(direction string) {
+	if ScaleEventsTotal != nil {
+		ScaleEventsTotal.WithLabelValues(direction).Inc()
+	}
+}

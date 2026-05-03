@@ -33,9 +33,7 @@ func (s *ClusterStatusService) ReportLoad(ctx context.Context, req *pb.LoadRepor
 		return &pb.LoadAck{Accepted: false, Message: err.Error()}, nil
 	}
 
-	if metrics.ReportedLoad != nil {
-		metrics.ReportedLoad.WithLabelValues(req.ClusterId).Set(float64(req.ActiveConnections))
-	}
+	metrics.SetReportedLoad(req.ClusterId, float64(req.ActiveConnections))
 
 	total := s.lb.TotalReportedLoad()
 

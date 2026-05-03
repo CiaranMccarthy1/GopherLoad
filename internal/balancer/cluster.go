@@ -22,6 +22,8 @@ type Cluster struct {
 	activeConnections int64
 	reportedLoad      int64
 	lastReportAt      int64
+	consecutiveErrors int64
+	lastErrorAt       int64
 }
 
 // NewCluster parses and validates a backend target.
@@ -42,6 +44,8 @@ func NewCluster(id, rawURL, region string, maxConnections int64) (*Cluster, erro
 
 	proxy := httputil.NewSingleHostReverseProxy(parsed)
 	proxy.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, proxyErr error) {
+		// Error handling injected by balancer later, or we can do it here if we pass the cluster ref.
+		// Actually, we'll set it in the balancer to call RecordError.
 		http.Error(rw, "upstream error", http.StatusBadGateway)
 	}
 
@@ -64,6 +68,26 @@ func (c *Cluster) IncActive() {
 
 func (c *Cluster) DecActive() {
 	atomic.AddInt64(&c.activeConnections, -1)
+}
+
+func (c *Cluster) RecordError() {
+	atomic.AddInt64(&c.consecutiveErrors, 1)
+	atomic.StoreInt64(&c.lastErrorAt, time.Now().UnixNano())
+}
+
+func (c *Cluster) RecordSuccess() {
+	atomic.StoreInt64(&c.consecutiveErrors, 0)
+}
+
+func (c *Cluster) IsHealthy() bool {
+	// A cluster is unhealthy if it has 5 or more consecutive errors,
+	// unless 10 seconds have passed since the last error (cooldown to retry).
+	errs := atomic.LoadInt64(&c.consecutiveErrors)
+	if errs < 5 {
+		return true
+	}
+	lastErr := atomic.LoadInt64(&c.lastErrorAt)
+	return time.Since(time.Unix(0, lastErr)) > 10*time.Second
 }
 
 func (c *Cluster) ReportedLoad() int64 {
