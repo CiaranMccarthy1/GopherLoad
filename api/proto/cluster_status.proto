@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package gopherload.v1;
+
+option go_package = "github.com/ciara/gopherload/proto;gopherloadv1";
+
+// ClusterStatus reports load metrics from clusters to the balancer.
+service ClusterStatus {
+  rpc ReportLoad(LoadReport) returns (LoadAck);
+}
+
+message LoadReport {
+  string cluster_id = 1;
+  int64 active_connections = 2;
+  string region = 3;
+  int64 max_connections = 4;
+  int64 observed_at_unix = 5;
+}
+
+message LoadAck {
+  bool accepted = 1;
+  string message = 2;
+  int64 total_load = 3;
+}
