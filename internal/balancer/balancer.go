@@ -13,7 +13,9 @@ import (
 )
 
 var (
+	// ErrNoClusters is returned when no backend clusters are available for routing.
 	ErrNoClusters      = errors.New("no clusters available")
+	// ErrClusterNotFound is returned when operating on a non-existent cluster ID.
 	ErrClusterNotFound = errors.New("cluster not found")
 )
 

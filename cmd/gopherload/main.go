@@ -36,33 +36,57 @@ func (s *stringList) Set(value string) error {
 	return nil
 }
 
-func main() {
-	var (
-		httpAddr      = flag.String("http-addr", ":8080", "HTTP reverse proxy listen address")
-		grpcAddr      = flag.String("grpc-addr", ":9090", "gRPC listen address")
-		strategyName  = flag.String("strategy", "current_load", "Routing strategy: modulo|proximity|current_load")
-		kubeconfig    = flag.String("kubeconfig", "", "Path to kubeconfig (optional)")
-		namespace     = flag.String("namespace", "default", "Kubernetes namespace for scaling actions")
-		deployment    = flag.String("deployment", "gopherload", "Kubernetes deployment name to scale")
-		scaleUp       = flag.Int64("scale-up", 800, "Scale up when total reported load exceeds this value")
-		scaleDown     = flag.Int64("scale-down", 200, "Scale down when total reported load falls below this value")
-		scaleCooldown = flag.Duration("scale-cooldown", 2*time.Minute, "Minimum time between scaling actions")
-		backends      stringList
-	)
-	flag.Var(&backends, "backend", "Backend cluster spec: id=<id>,url=<url>,region=<region>,max=<max>")
+// Strategy names define the valid routing algorithms.
+const (
+	StrategyModulo      = "modulo"
+	StrategyProximity   = "proximity"
+	StrategyCurrentLoad = "current_load"
+)
+
+// Config holds the application configuration parsed from flags.
+type Config struct {
+	HTTPAddr      string
+	GRPCAddr      string
+	StrategyName  string
+	Kubeconfig    string
+	Namespace     string
+	Deployment    string
+	ScaleUp       int64
+	ScaleDown     int64
+	ScaleCooldown time.Duration
+	Backends      stringList
+}
+
+func parseFlags() Config {
+	var cfg Config
+	flag.StringVar(&cfg.HTTPAddr, "http-addr", ":8080", "HTTP reverse proxy listen address")
+	flag.StringVar(&cfg.GRPCAddr, "grpc-addr", ":9090", "gRPC listen address")
+	flag.StringVar(&cfg.StrategyName, "strategy", StrategyCurrentLoad, "Routing strategy: modulo|proximity|current_load")
+	flag.StringVar(&cfg.Kubeconfig, "kubeconfig", "", "Path to kubeconfig (optional)")
+	flag.StringVar(&cfg.Namespace, "namespace", "default", "Kubernetes namespace for scaling actions")
+	flag.StringVar(&cfg.Deployment, "deployment", "gopherload", "Kubernetes deployment name to scale")
+	flag.Int64Var(&cfg.ScaleUp, "scale-up", 800, "Scale up when total reported load exceeds this value")
+	flag.Int64Var(&cfg.ScaleDown, "scale-down", 200, "Scale down when total reported load falls below this value")
+	flag.DurationVar(&cfg.ScaleCooldown, "scale-cooldown", 2*time.Minute, "Minimum time between scaling actions")
+	flag.Var(&cfg.Backends, "backend", "Backend cluster spec: id=<id>,url=<url>,region=<region>,max=<max>")
 	flag.Parse()
+	return cfg
+}
+
+func main() {
+	cfg := parseFlags()
 
 	metrics.Register()
 
 	// 1. Build Strategy
-	strategyImpl, err := buildStrategy(*strategyName)
+	strategyImpl, err := buildStrategy(cfg.StrategyName)
 	if err != nil {
 		log.Fatalf("invalid strategy: %v", err)
 	}
 
 	// 2. Initialize Load Balancer
 	lb := balancer.NewLoadBalancer(strategyImpl)
-	specs := backends
+	specs := cfg.Backends
 	if len(specs) == 0 {
 		specs = defaultBackendSpecs()
 	}
@@ -78,7 +102,7 @@ func main() {
 	}
 
 	// 3. Initialize Scaler
-	sc, err := scaler.NewController(*kubeconfig, *namespace, *deployment, *scaleUp, *scaleDown, *scaleCooldown)
+	sc, err := scaler.NewController(cfg.Kubeconfig, cfg.Namespace, cfg.Deployment, cfg.ScaleUp, cfg.ScaleDown, cfg.ScaleCooldown)
 	if err != nil {
 		log.Printf("scaler disabled: %v", err)
 		sc = nil
@@ -88,14 +112,14 @@ func main() {
 	grpcServer := grpc.NewServer()
 	pb.RegisterClusterStatusServer(grpcServer, rpc.NewClusterStatusService(lb))
 
-	grpcListener, err := net.Listen("tcp", *grpcAddr)
+	grpcListener, err := net.Listen("tcp", cfg.GRPCAddr)
 	if err != nil {
-		log.Fatalf("failed to listen on gRPC address %s: %v", *grpcAddr, err)
+		log.Fatalf("failed to listen on gRPC address %s: %v", cfg.GRPCAddr, err)
 	}
 
 	// 5. Setup HTTP
 	httpServer := &http.Server{
-		Addr:    *httpAddr,
+		Addr:    cfg.HTTPAddr,
 		Handler: lb,
 	}
 
@@ -106,14 +130,14 @@ func main() {
 	errChan := make(chan error, 2)
 
 	go func() {
-		log.Printf("gRPC server listening on %s (Protobuf codec)", *grpcAddr)
+		log.Printf("gRPC server listening on %s (Protobuf codec)", cfg.GRPCAddr)
 		if err := grpcServer.Serve(grpcListener); err != nil {
 			errChan <- fmt.Errorf("gRPC server failed: %w", err)
 		}
 	}()
 
 	go func() {
-		log.Printf("HTTP proxy listening on %s", *httpAddr)
+		log.Printf("HTTP proxy listening on %s", cfg.HTTPAddr)
 		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errChan <- fmt.Errorf("HTTP server failed: %w", err)
 		}
@@ -155,14 +179,14 @@ func main() {
 
 func buildStrategy(name string) (balancer.Strategy, error) {
 	switch strings.ToLower(name) {
-	case "modulo":
+	case StrategyModulo:
 		return strategy.ModuloStrategy{}, nil
-	case "proximity":
+	case StrategyProximity:
 		return strategy.ProximityStrategy{
 			LatencyMap:     defaultLatencyMap(),
 			DefaultLatency: 250 * time.Millisecond,
 		}, nil
-	case "current_load", "load", "current":
+	case StrategyCurrentLoad, "load", "current":
 		return strategy.CurrentLoadStrategy{}, nil
 	default:
 		return nil, fmt.Errorf("unknown strategy %q", name)
