@@ -2,6 +2,7 @@ package balancer
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"sort"
 	"strconv"
@@ -13,28 +14,15 @@ import (
 )
 
 var (
-	// ErrNoClusters is returned when no backend clusters are available for routing.
 	ErrNoClusters      = errors.New("no clusters available")
-	// ErrClusterNotFound is returned when operating on a non-existent cluster ID.
 	ErrClusterNotFound = errors.New("cluster not found")
 )
 
-// Strategy is the canonical routing interface for GopherLoad.
-//
-// All routing algorithm implementations (e.g. in internal/strategy) satisfy
-// this interface implicitly via Go's structural typing. There must be exactly
-// one definition of this contract — here in the balancer package — to maintain
-// a single source of truth and avoid hidden coupling.
 type Strategy interface {
-	// Name returns a human-readable identifier for the strategy (e.g. "modulo").
 	Name() string
-	// Select chooses a target cluster from the provided list based on the
-	// request context. Implementations must handle an empty cluster slice
-	// by returning ErrNoClusters.
 	Select(ctx RequestContext, clusters []*Cluster) (*Cluster, error)
 }
 
-// LoadBalancer manages routing decisions across clusters.
 type LoadBalancer struct {
 	mu       sync.RWMutex
 	clusters map[string]*Cluster
@@ -42,7 +30,6 @@ type LoadBalancer struct {
 	strategy Strategy
 }
 
-// NewLoadBalancer creates a load balancer with the provided strategy.
 func NewLoadBalancer(strategy Strategy) *LoadBalancer {
 	return &LoadBalancer{
 		clusters: make(map[string]*Cluster),
@@ -50,7 +37,7 @@ func NewLoadBalancer(strategy Strategy) *LoadBalancer {
 	}
 }
 
-// updateSorted regenerates the cached sorted slice. Caller must hold lb.mu for writing.
+// Caller must hold lb.mu for writing.
 func (lb *LoadBalancer) updateSorted() {
 	list := make([]*Cluster, 0, len(lb.clusters))
 	for _, cluster := range lb.clusters {
@@ -62,7 +49,6 @@ func (lb *LoadBalancer) updateSorted() {
 	lb.sorted = list
 }
 
-// AddCluster registers a new backend target.
 func (lb *LoadBalancer) AddCluster(cluster *Cluster) error {
 	if cluster == nil {
 		return errors.New("cluster is nil")
@@ -81,7 +67,6 @@ func (lb *LoadBalancer) AddCluster(cluster *Cluster) error {
 	return nil
 }
 
-// RemoveCluster removes a backend by id.
 func (lb *LoadBalancer) RemoveCluster(id string) bool {
 	lb.mu.Lock()
 	defer lb.mu.Unlock()
@@ -93,7 +78,6 @@ func (lb *LoadBalancer) RemoveCluster(id string) bool {
 	return true
 }
 
-// GetCluster returns a backend by id.
 func (lb *LoadBalancer) GetCluster(id string) (*Cluster, bool) {
 	lb.mu.RLock()
 	defer lb.mu.RUnlock()
@@ -101,7 +85,6 @@ func (lb *LoadBalancer) GetCluster(id string) (*Cluster, bool) {
 	return cluster, ok
 }
 
-// ListClusters returns a deterministic snapshot of healthy backends.
 func (lb *LoadBalancer) ListClusters() []*Cluster {
 	lb.mu.RLock()
 	defer lb.mu.RUnlock()
@@ -114,14 +97,12 @@ func (lb *LoadBalancer) ListClusters() []*Cluster {
 	return res
 }
 
-// SetStrategy updates the routing strategy.
 func (lb *LoadBalancer) SetStrategy(strategy Strategy) {
 	lb.mu.Lock()
 	defer lb.mu.Unlock()
 	lb.strategy = strategy
 }
 
-// SelectCluster chooses a backend using the configured strategy.
 func (lb *LoadBalancer) SelectCluster(ctx RequestContext) (*Cluster, error) {
 	clusters := lb.ListClusters()
 	if len(clusters) == 0 {
@@ -138,7 +119,6 @@ func (lb *LoadBalancer) SelectCluster(ctx RequestContext) (*Cluster, error) {
 	return strategy.Select(ctx, clusters)
 }
 
-// UpdateReportedLoad records cluster metrics from the gRPC service.
 func (lb *LoadBalancer) UpdateReportedLoad(clusterID string, load int64) error {
 	cluster, ok := lb.GetCluster(clusterID)
 	if !ok {
@@ -148,7 +128,6 @@ func (lb *LoadBalancer) UpdateReportedLoad(clusterID string, load int64) error {
 	return nil
 }
 
-// TotalReportedLoad sums the most recently reported cluster load values.
 func (lb *LoadBalancer) TotalReportedLoad() int64 {
 	var total int64
 	clusters := lb.ListClusters()
@@ -158,7 +137,6 @@ func (lb *LoadBalancer) TotalReportedLoad() int64 {
 	return total
 }
 
-// TotalActiveConnections sums the current in-flight connections.
 func (lb *LoadBalancer) TotalActiveConnections() int64 {
 	var total int64
 	clusters := lb.ListClusters()
@@ -168,7 +146,6 @@ func (lb *LoadBalancer) TotalActiveConnections() int64 {
 	return total
 }
 
-// responseCapture wraps http.ResponseWriter to capture the status code.
 type responseCapture struct {
 	http.ResponseWriter
 	statusCode int
@@ -179,8 +156,6 @@ func (rc *responseCapture) WriteHeader(code int) {
 	rc.ResponseWriter.WriteHeader(code)
 }
 
-// ServeHTTP handles incoming L7 requests and proxies them to a cluster.
-// It also serves the /__health and /metrics diagnostic endpoints.
 func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/__health" {
 		w.WriteHeader(http.StatusOK)
@@ -199,6 +174,8 @@ func (lb *LoadBalancer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no upstream available", http.StatusServiceUnavailable)
 		return
 	}
+
+	log.Printf("[LB] Routing %s %s -> %s", r.Method, r.URL.Path, cluster.ID)
 
 	cluster.IncActive()
 	metrics.IncActiveConnections(cluster.ID)

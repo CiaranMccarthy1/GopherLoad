@@ -4,12 +4,8 @@ import (
 	"github.com/ciara/gopherload/internal/balancer"
 )
 
-// Compile-time assertion: CurrentLoadStrategy satisfies balancer.Strategy implicitly
-// via Go's structural typing. No local Strategy interface is needed because the
-// canonical contract lives in the balancer package.
 var _ balancer.Strategy = CurrentLoadStrategy{}
 
-// CurrentLoadStrategy routes to the least busy cluster.
 type CurrentLoadStrategy struct{}
 
 func (CurrentLoadStrategy) Name() string { return "current_load" }

@@ -11,7 +11,6 @@ import (
 	"time"
 )
 
-// Cluster represents a backend target and its runtime metrics.
 type Cluster struct {
 	ID             string
 	URL            *url.URL
@@ -26,7 +25,6 @@ type Cluster struct {
 	lastErrorAt       int64
 }
 
-// NewCluster parses and validates a backend target.
 func NewCluster(id, rawURL, region string, maxConnections int64) (*Cluster, error) {
 	if strings.TrimSpace(id) == "" {
 		return nil, errors.New("cluster id is required")
@@ -44,8 +42,6 @@ func NewCluster(id, rawURL, region string, maxConnections int64) (*Cluster, erro
 
 	proxy := httputil.NewSingleHostReverseProxy(parsed)
 	proxy.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, proxyErr error) {
-		// Error handling injected by balancer later, or we can do it here if we pass the cluster ref.
-		// Actually, we'll set it in the balancer to call RecordError.
 		http.Error(rw, "upstream error", http.StatusBadGateway)
 	}
 
@@ -80,8 +76,6 @@ func (c *Cluster) RecordSuccess() {
 }
 
 func (c *Cluster) IsHealthy() bool {
-	// A cluster is unhealthy if it has 5 or more consecutive errors,
-	// unless 10 seconds have passed since the last error (cooldown to retry).
 	errs := atomic.LoadInt64(&c.consecutiveErrors)
 	if errs < 5 {
 		return true
@@ -107,14 +101,12 @@ func (c *Cluster) LastReportTime() time.Time {
 	return time.Unix(0, last)
 }
 
-// RequestContext carries request metadata used by strategies.
 type RequestContext struct {
 	ClientID     string
 	ClientRegion string
 	RemoteAddr   string
 }
 
-// ContextFromRequest extracts routing hints from an HTTP request.
 func ContextFromRequest(r *http.Request) RequestContext {
 	return RequestContext{
 		ClientID:     firstNonEmpty(r.Header.Get("X-Client-ID"), r.URL.Query().Get("client_id")),

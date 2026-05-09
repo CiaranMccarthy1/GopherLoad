@@ -19,7 +19,6 @@ import (
 
 var ErrNotConfigured = errors.New("kubernetes client not configured")
 
-// Controller drives scale decisions based on total system load.
 type Controller struct {
 	clientset          kubernetes.Interface
 	namespace          string
@@ -30,7 +29,6 @@ type Controller struct {
 	lastActionUnix     int64
 }
 
-// NewController creates a Kubernetes client and configures thresholds.
 func NewController(kubeconfigPath, namespace, deploymentName string, scaleUp, scaleDown int64, cooldown time.Duration) (*Controller, error) {
 	config, err := buildKubeConfig(kubeconfigPath)
 	if err != nil {
@@ -67,7 +65,6 @@ func buildKubeConfig(kubeconfigPath string) (*rest.Config, error) {
 	return rest.InClusterConfig()
 }
 
-// EvaluateAndScale compares total load to thresholds and triggers scaling.
 func (s *Controller) EvaluateAndScale(ctx context.Context, totalLoad int64) error {
 	if s == nil || s.clientset == nil {
 		return ErrNotConfigured
@@ -111,8 +108,6 @@ func (s *Controller) markAction() {
 	atomic.StoreInt64(&s.lastActionUnix, time.Now().UnixNano())
 }
 
-// ScaleUp scales up the target Kubernetes Deployment by incrementing
-// its replica count by 1.
 func (s *Controller) ScaleUp(ctx context.Context) error {
 	if s.clientset == nil {
 		return ErrNotConfigured
@@ -152,8 +147,6 @@ func (s *Controller) ScaleUp(ctx context.Context) error {
 	return nil
 }
 
-// ScaleDown scales down the target Kubernetes Deployment by decrementing
-// its replica count by 1, with a minimum bound of 1 replica.
 func (s *Controller) ScaleDown(ctx context.Context) error {
 	if s.clientset == nil {
 		return ErrNotConfigured

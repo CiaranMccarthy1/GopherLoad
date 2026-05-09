@@ -36,14 +36,12 @@ func (s *stringList) Set(value string) error {
 	return nil
 }
 
-// Strategy names define the valid routing algorithms.
 const (
 	StrategyModulo      = "modulo"
 	StrategyProximity   = "proximity"
 	StrategyCurrentLoad = "current_load"
 )
 
-// Config holds the application configuration parsed from flags.
 type Config struct {
 	HTTPAddr      string
 	GRPCAddr      string
@@ -78,13 +76,11 @@ func main() {
 
 	metrics.Register()
 
-	// 1. Build Strategy
 	strategyImpl, err := buildStrategy(cfg.StrategyName)
 	if err != nil {
 		log.Fatalf("invalid strategy: %v", err)
 	}
 
-	// 2. Initialize Load Balancer
 	lb := balancer.NewLoadBalancer(strategyImpl)
 	specs := cfg.Backends
 	if len(specs) == 0 {
@@ -101,14 +97,12 @@ func main() {
 		}
 	}
 
-	// 3. Initialize Scaler
 	sc, err := scaler.NewController(cfg.Kubeconfig, cfg.Namespace, cfg.Deployment, cfg.ScaleUp, cfg.ScaleDown, cfg.ScaleCooldown)
 	if err != nil {
 		log.Printf("scaler disabled: %v", err)
 		sc = nil
 	}
 
-	// 4. Setup gRPC
 	grpcServer := grpc.NewServer()
 	pb.RegisterClusterStatusServer(grpcServer, rpc.NewClusterStatusService(lb))
 
@@ -117,13 +111,11 @@ func main() {
 		log.Fatalf("failed to listen on gRPC address %s: %v", cfg.GRPCAddr, err)
 	}
 
-	// 5. Setup HTTP
 	httpServer := &http.Server{
 		Addr:    cfg.HTTPAddr,
 		Handler: lb,
 	}
 
-	// 6. Graceful Shutdown orchestration
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -143,7 +135,6 @@ func main() {
 		}
 	}()
 
-	// 7. Background Scaling Loop
 	if sc != nil {
 		go func() {
 			ticker := time.NewTicker(15 * time.Second)

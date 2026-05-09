@@ -9,7 +9,6 @@ import (
 	"github.com/ciara/gopherload/internal/metrics"
 )
 
-// ClusterStatusService handles gRPC load reports from clusters.
 type ClusterStatusService struct {
 	pb.UnimplementedClusterStatusServer
 	lb *balancer.LoadBalancer
