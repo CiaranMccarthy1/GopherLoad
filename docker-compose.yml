@@ -1,0 +1,30 @@
+services:
+  balancer:
+    build: .
+    ports:
+      - "8080:8080"
+      - "9090:9090"
+    command: >
+      --strategy=current_load
+      --backend="id=cluster-a,url=http://backend-a:8081,region=us-east"
+      --backend="id=cluster-b,url=http://backend-b:8081,region=us-west"
+      --backend="id=cluster-c,url=http://backend-c:8081,region=eu-central"
+    depends_on:
+      - backend-a
+      - backend-b 
+      - backend-c
+
+  backend-a:
+    build: .
+    entrypoint: ["fakebackend"]
+    command: ["-port", "8081", "-id", "cluster-a"]
+
+  backend-b:
+    build: .
+    entrypoint: ["fakebackend"]
+    command: ["-port", "8081", "-id", "cluster-b"]
+
+  backend-c:
+    build: .
+    entrypoint: ["fakebackend"]
+    command: ["-port", "8081", "-id", "cluster-c"]
