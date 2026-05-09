@@ -77,9 +77,36 @@ message LoadAck {
 }
 ```
 
+## Local Testing Tools
+
+To simplify development and testing, GopherLoad includes two helper utilities:
+
+### 1. Fake Backend (`cmd/fakebackend`)
+A lightweight HTTP server that simulates a real cluster node.
+*   **Latency:** Randomly adds 0–50ms delay to non-health requests.
+*   **Errors:** Simulates a 5% failure rate (HTTP 500) for testing resilience.
+*   **Health:** Responds to `GET /health` with `200 OK`.
+
+```bash
+# Run 3 instances on different ports
+go run ./cmd/fakebackend -port 8081 -id cluster-a
+go run ./cmd/fakebackend -port 8082 -id cluster-b
+go run ./cmd/fakebackend -port 8083 -id cluster-c
+```
+
+### 2. Load Tester (`cmd/loadtest`)
+Sends requests at a controlled rate and provides a live summary of results.
+*   **Live Stats:** Shows latency, status codes, and backend distribution.
+*   **Configurable:** Adjust rate (req/min), target URL, and summary interval.
+
+```bash
+# Send 100 requests per minute to the balancer
+go run ./cmd/loadtest -rate 100 -url http://localhost:8080
+```
+
 ## Development
 
-The project requires Go 1.22 or higher and uses `client-go` and `google.golang.org/grpc`.
+The project requires Go 1.23 or higher and uses `client-go` and `google.golang.org/grpc`.
 
 ### Run Tests
 ```bash
@@ -89,14 +116,26 @@ go test ./... -v -count=1
 ### Build
 ```bash
 go build -o gopherload ./cmd/gopherload
+go build -o fakebackend ./cmd/fakebackend
+go build -o loadtest ./cmd/loadtest
 ```
 
-### Run Locally
-```bash
-./gopherload \
-  --strategy=modulo \
-  --http-addr=:8080 \
-  --grpc-addr=:9090 \
-  --backend="id=us-east-1,url=http://10.0.1.10:80,region=us-east,max=500" \
-  --backend="id=eu-west-1,url=http://10.0.2.10:80,region=eu-west,max=500"
-```
+### Run Locally (Full Cluster Simulation)
+
+1. **Start Backends:** (In separate terminals)
+   ```bash
+   go run ./cmd/fakebackend -port 8081 -id cluster-a
+   go run ./cmd/fakebackend -port 8082 -id cluster-b
+   ```
+
+2. **Start Balancer:**
+   ```bash
+   go run ./cmd/gopherload --strategy=current_load
+   ```
+
+3. **Start Traffic:**
+   ```bash
+   go run ./cmd/loadtest -rate 500
+   ```
+
+The Balancer will log its routing decisions (e.g., `[LB] Routing GET /test -> cluster-a`), and the Load Tester will provide a summary of the distribution every 10 seconds.
