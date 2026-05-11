@@ -86,22 +86,30 @@ A lightweight HTTP server that simulates a real cluster node.
 *   **Latency:** Randomly adds 0–50ms delay to non-health requests.
 *   **Errors:** Simulates a 5% failure rate (HTTP 500) for testing resilience.
 *   **Health:** Responds to `GET /health` with `200 OK`.
+*   **Load Reporting:** Optional gRPC load reports to the balancer when `-grpc-addr` is set.
 
 ```bash
 # Run 3 instances on different ports
 go run ./cmd/fakebackend -port 8081 -id cluster-a
 go run ./cmd/fakebackend -port 8082 -id cluster-b
 go run ./cmd/fakebackend -port 8083 -id cluster-c
+
+# Run with load reporting to the balancer
+go run ./cmd/fakebackend -port 8081 -id cluster-a -grpc-addr localhost:9090 -region us-east
 ```
 
 ### 2. Load Tester (`cmd/loadtest`)
 Sends requests at a controlled rate and provides a live summary of results.
 *   **Live Stats:** Shows latency, status codes, and backend distribution.
 *   **Configurable:** Adjust rate (req/min), target URL, and summary interval.
+*   **Optional Stop:** Stop after N consecutive failures with `-fail-after`.
 
 ```bash
 # Send 100 requests per minute to the balancer
 go run ./cmd/loadtest -rate 100 -url http://localhost:8080
+
+# Stop after 20 consecutive failures
+go run ./cmd/loadtest -rate 500 -fail-after 20
 ```
 
 ## Development

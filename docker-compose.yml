@@ -17,14 +17,14 @@ services:
   backend-a:
     build: .
     entrypoint: ["fakebackend"]
-    command: ["-port", "8081", "-id", "cluster-a"]
+    command: ["-port", "8081", "-id", "cluster-a", "-grpc-addr", "balancer:9090", "-region", "us-east"]
 
   backend-b:
     build: .
     entrypoint: ["fakebackend"]
-    command: ["-port", "8081", "-id", "cluster-b"]
+    command: ["-port", "8081", "-id", "cluster-b", "-grpc-addr", "balancer:9090", "-region", "us-west"]
 
   backend-c:
     build: .
     entrypoint: ["fakebackend"]
-    command: ["-port", "8081", "-id", "cluster-c"]
+    command: ["-port", "8081", "-id", "cluster-c", "-grpc-addr", "balancer:9090", "-region", "eu-central"]

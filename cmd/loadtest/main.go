@@ -29,23 +29,26 @@ type result struct {
 }
 
 type stats struct {
-	mu         sync.Mutex
-	total      int
-	success    int
-	errors     int
-	statusCodes map[int]int
-	backends   map[string]int
-	totalLatency time.Duration
+	mu                sync.Mutex
+	total             int
+	success           int
+	errors            int
+	statusCodes       map[int]int
+	backends          map[string]int
+	totalLatency      time.Duration
+	consecutiveErrors int
 }
 
-func (s *stats) record(r result) {
+func (s *stats) record(r result) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.total++
 	if r.err != nil || r.status >= 500 {
 		s.errors++
+		s.consecutiveErrors++
 	} else {
 		s.success++
+		s.consecutiveErrors = 0
 	}
 	if r.status > 0 {
 		s.statusCodes[r.status]++
@@ -54,6 +57,7 @@ func (s *stats) record(r result) {
 		s.backends[r.backend]++
 	}
 	s.totalLatency += r.latency
+	return s.consecutiveErrors
 }
 
 func (s *stats) print(elapsed time.Duration) {
@@ -102,10 +106,11 @@ func (s *stats) print(elapsed time.Duration) {
 }
 
 func main() {
-	rate    := flag.Int("rate", 100, "Requests per minute to send")
-	target  := flag.String("url", "http://localhost:8080", "Base URL of the load balancer")
-	path    := flag.String("path", "/test", "Request path to hit")
+	rate := flag.Int("rate", 100, "Requests per minute to send")
+	target := flag.String("url", "http://localhost:8080", "Base URL of the load balancer")
+	path := flag.String("path", "/test", "Request path to hit")
 	summary := flag.Duration("summary", 10*time.Second, "How often to print a summary")
+	failAfter := flag.Int("fail-after", 0, "Stop after N consecutive failures (0 disables)")
 	flag.Parse()
 
 	interval := time.Minute / time.Duration(*rate)
@@ -119,9 +124,11 @@ func main() {
 	}
 
 	start := time.Now()
-	ticker  := time.NewTicker(interval)
+	ticker := time.NewTicker(interval)
 	printer := time.NewTicker(*summary)
-	quit   := make(chan os.Signal, 1)
+	quit := make(chan os.Signal, 1)
+	stop := make(chan struct{})
+	stopOnce := sync.Once{}
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
 	for {
@@ -133,13 +140,25 @@ func main() {
 			st.print(time.Since(start))
 			return
 
+		case <-stop:
+			ticker.Stop()
+			printer.Stop()
+			log.Printf("Stopping — %d consecutive failures reached:", *failAfter)
+			st.print(time.Since(start))
+			return
+
 		case <-printer.C:
 			st.print(time.Since(start))
 
 		case <-ticker.C:
 			go func() {
 				r := sendRequest(client, *target+*path)
-				st.record(r)
+				consecutiveErrors := st.record(r)
+				if *failAfter > 0 && consecutiveErrors >= *failAfter {
+					stopOnce.Do(func() {
+						close(stop)
+					})
+				}
 
 				symbol := "✓"
 				if r.err != nil {
