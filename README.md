@@ -83,8 +83,6 @@ To simplify development and testing, GopherLoad includes two helper utilities:
 
 ### 1. Fake Backend (`cmd/fakebackend`)
 A lightweight HTTP server that simulates a real cluster node.
-*   **Latency:** Randomly adds 0–50ms delay to non-health requests.
-*   **Errors:** Simulates a 5% failure rate (HTTP 500) for testing resilience.
 *   **Health:** Responds to `GET /health` with `200 OK`.
 *   **Load Reporting:** Optional gRPC load reports to the balancer when `-grpc-addr` is set.
 
@@ -105,8 +103,8 @@ Sends requests at a controlled rate and provides a live summary of results.
 *   **Optional Stop:** Stop after N consecutive failures with `-fail-after`.
 
 ```bash
-# Send 100 requests per minute to the balancer
-go run ./cmd/loadtest -rate 100 -url http://localhost:8080
+# Send 10000 requests per minute to the balancer
+go run ./cmd/loadtest -rate 10000-url http://localhost:8080
 
 # Stop after 20 consecutive failures
 go run ./cmd/loadtest -rate 500 -fail-after 20
@@ -128,22 +126,32 @@ go build -o fakebackend ./cmd/fakebackend
 go build -o loadtest ./cmd/loadtest
 ```
 
-### Run Locally (Full Cluster Simulation)
+## Run Locally (Full Cluster Simulation)
 
-1. **Start Backends:** (In separate terminals)
-   ```bash
-   go run ./cmd/fakebackend -port 8081 -id cluster-a
-   go run ./cmd/fakebackend -port 8082 -id cluster-b
-   ```
+1. **Start with Docker Compose (recommended for full simulation):**
+  ```bash
+  # Build images and start services 
+  docker compose up --build
 
-2. **Start Balancer:**
-   ```bash
-   go run ./cmd/gopherload --strategy=current_load
-   ```
+  ```
+
+2. **(Alternative) Start services locally with Go (for development):**
+  ```bash
+  # Start balancer
+  go run ./cmd/gopherload
+
+  # Start fake backends (3 instances)
+  go run ./cmd/fakebackend -port 8081 -id cluster-a
+  go run ./cmd/fakebackend -port 8082 -id cluster-b
+  go run ./cmd/fakebackend -port 8083 -id cluster-c
+  ```
 
 3. **Start Traffic:**
-   ```bash
-   go run ./cmd/loadtest -rate 500
-   ```
+  ```bash
+  go run ./cmd/loadtest -rate 500
+  ```
+
+## Bench Marks
+- **Current best:** 4700 requests/sec (measured with the `cmd/loadtest` tool against a local simulation)
 
 The Balancer will log its routing decisions (e.g., `[LB] Routing GET /test -> cluster-a`), and the Load Tester will provide a summary of the distribution every 10 seconds.

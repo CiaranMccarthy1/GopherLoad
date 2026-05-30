@@ -69,11 +69,13 @@ func (s *stats) print(elapsed time.Duration) {
 		avgLatency = s.totalLatency / time.Duration(s.total)
 	}
 	rps := float64(s.total) / elapsed.Seconds()
+	rpm := int64(rps * 60)
 
 	fmt.Println()
 	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	fmt.Printf("  Elapsed:      %s\n", elapsed.Round(time.Second))
 	fmt.Printf("  Total reqs:   %d  (%.1f req/s)\n", s.total, rps)
+	fmt.Printf("  Requests per minute: %d\n", rpm)
 	fmt.Printf("  Success:      %d\n", s.success)
 	fmt.Printf("  Errors:       %d\n", s.errors)
 	fmt.Printf("  Avg latency:  %s\n", avgLatency.Round(time.Millisecond))
@@ -117,7 +119,14 @@ func main() {
 	log.Printf("Sending %d req/min to %s%s  (1 request every %s)", *rate, *target, *path, interval)
 	log.Printf("Press Ctrl+C to stop.\n")
 
-	client := &http.Client{Timeout: 5 * time.Second}
+	transport := &http.Transport{
+		MaxIdleConns:        10000,
+		MaxIdleConnsPerHost: 1000,
+	}
+	client := &http.Client{
+		Timeout:   5 * time.Second,
+		Transport: transport,
+	}
 	st := &stats{
 		statusCodes: make(map[int]int),
 		backends:    make(map[string]int),

@@ -8,11 +8,9 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
-	"math/rand"
 	"net"
 	"net/http"
 	"os"
@@ -27,13 +25,6 @@ import (
 
 	pb "github.com/ciara/gopherload/api/proto"
 )
-
-type response struct {
-	Backend string `json:"backend"`
-	Port    string `json:"port"`
-	Path    string `json:"path"`
-	Method  string `json:"method"`
-}
 
 func main() {
 	port := flag.Int("port", 8081, "TCP port to listen on")
@@ -52,36 +43,18 @@ func main() {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("[%s] %s %s from %s", *id, r.Method, r.URL.Path, remoteHost(r))
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "ok")
 	})
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("[%s] %s %s from %s", *id, r.Method, r.URL.Path, remoteHost(r))
 		atomic.AddInt64(&activeRequests, 1)
 		defer atomic.AddInt64(&activeRequests, -1)
 
-		jitter := time.Duration(rand.Intn(51)) * time.Millisecond
-		time.Sleep(jitter)
-
-		if rand.Float64() < 0.05 {
-			http.Error(w, `{"error":"simulated internal server error"}`, http.StatusInternalServerError)
-			return
-		}
-
-		body := response{
-			Backend: *id,
-			Port:    portStr,
-			Path:    r.URL.Path,
-			Method:  r.Method,
-		}
-
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		if err := json.NewEncoder(w).Encode(body); err != nil {
-			log.Printf("[%s] failed to write response: %v", *id, err)
-		}
+		_, _ = fmt.Fprintf(w, `{"backend":"%s","port":"%s","path":"%s","method":"%s"}`,
+			*id, portStr, r.URL.Path, r.Method)
 	})
 
 	srv := &http.Server{
@@ -94,7 +67,7 @@ func main() {
 
 	serverErr := make(chan error, 1)
 	go func() {
-		log.Printf("[%s] listening on %s", *id, addr)
+		//log.Printf("[%s] listening on %s", *id, addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			serverErr <- err
 		}

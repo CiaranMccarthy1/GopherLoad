@@ -11,6 +11,14 @@ import (
 	"time"
 )
 
+var tunedTransport = &http.Transport{
+	MaxIdleConns:        10000,
+	MaxIdleConnsPerHost: 1000,
+	MaxConnsPerHost:     0,
+	IdleConnTimeout:     90 * time.Second,
+	DisableKeepAlives:   false,
+}
+
 type Cluster struct {
 	ID             string
 	URL            *url.URL
@@ -41,6 +49,7 @@ func NewCluster(id, rawURL, region string, maxConnections int64) (*Cluster, erro
 	}
 
 	proxy := httputil.NewSingleHostReverseProxy(parsed)
+	proxy.Transport = tunedTransport
 	proxy.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, proxyErr error) {
 		http.Error(rw, "upstream error", http.StatusBadGateway)
 	}
